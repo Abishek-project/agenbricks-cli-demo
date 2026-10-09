@@ -3,7 +3,7 @@ from collections.abc import AsyncGenerator, Callable
 from typing import Any
 
 from databricks.sdk import WorkspaceClient
-from databricks_langchain import ChatDatabricks
+from databricks_langchain import ChatDatabricks, DatabricksFunctionClient, UCFunctionToolkit
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware, HumanInTheLoopMiddleware
 from langchain_core.messages import ToolMessage
@@ -40,6 +40,23 @@ SYSTEM_PROMPT = """You are Gorilla Commerce's pricing assistant for Amazon US.
 - Explain recommendations briefly: current price, margin, stock, and the reason.
 - Never propose a price change of more than 10% in one step.
 - You only analyse and recommend; you cannot change prices."""
+
+# UC functions called directly with UCFunctionToolkit, the docs' recommended way (the agent.toml
+# `uc_function` bindings go through the legacy /api/2.0/mcp/functions endpoint). The trailing * loads
+# every function in the schema, so new functions are picked up without a code change or redeploy.
+UC_FUNCTIONS = ["gc_agent_bricks_mvp.gc_pricing_agent_mvp.*"]
+
+
+def uc_function_tools():
+    """UC functions as LangChain tools, using the same Databricks auth as the model."""
+    client = DatabricksFunctionClient(client=workspace_client())
+    tools = UCFunctionToolkit(function_names=UC_FUNCTIONS, client=client).tools
+    for tool in tools:
+        # The default name is catalog__schema__function cut to 64 characters from the front; use the
+        # function name instead. Execution uses the stored full name, so renaming is safe.
+        tool.name = tool.uc_function_name.split(".")[-1]
+    return tools
+
 
 # Tools that require human approval before they run. Map a tool name to True to allow every decision
 # (approve / edit / reject / respond), or to a config dict to restrict them (see HumanInTheLoopMiddleware).
@@ -131,6 +148,7 @@ async def create_agent_graph(
     mcp = await mcp_tools(build_mcp_servers(), workspace_client_for=workspace_client_for)
     tools = [
         *all_tools(),
+        *uc_function_tools(),
         *memory_tools(actor),
         *genie_tools(workspace_client_for=workspace_client_for),
         *mcp,
