@@ -5,7 +5,8 @@ from typing import Any
 from databricks.sdk import WorkspaceClient
 from databricks_langchain import ChatDatabricks
 from langchain.agents import create_agent
-from langchain.agents.middleware import HumanInTheLoopMiddleware
+from langchain.agents.middleware import AgentMiddleware, HumanInTheLoopMiddleware
+from langchain_core.messages import ToolMessage
 
 from agent.mcps import build_mcp_servers
 
@@ -32,11 +33,44 @@ from databricks_agentkit.runtime.auth import AuthError
 # workspace exposes — the demo chat app's picker lists what's available.
 MODEL = "system.ai.claude-sonnet-4-5"
 
+# Instructions the model gets on every turn, before the conversation.
+SYSTEM_PROMPT = """You are Gorilla Commerce's pricing assistant for Amazon US.
+- Use the tools for every number; never guess prices, margins or stock.
+- When the user names a product, call search_skus first, then use the SKU with the other tools.
+- Explain recommendations briefly: current price, margin, stock, and the reason.
+- Never propose a price change of more than 10% in one step.
+- You only analyse and recommend; you cannot change prices."""
+
 # Tools that require human approval before they run. Map a tool name to True to allow every decision
 # (approve / edit / reject / respond), or to a config dict to restrict them (see HumanInTheLoopMiddleware).
 # When a listed tool is about to run, the agent pauses and emits an `interrupt` event; the client
 # resumes by sending `resume` with the same session id. Empty this dict to disable approval gating.
 REQUIRE_APPROVAL = {"send_message": True}
+
+
+def _flatten(message):
+    """Collapse a tool result's content blocks into one string.
+
+    UC-function and MCP tools return content blocks that carry an ``id``. Sent back to Claude
+    through the AI Gateway, that ``id`` fails with 400 "tool_result.content.0.text.id: Extra inputs
+    are not permitted". Plain-text content avoids it.
+    """
+    if isinstance(message, ToolMessage) and isinstance(message.content, list):
+        message.content = "\n".join(
+            block.get("text", "") if isinstance(block, dict) else str(block)
+            for block in message.content
+        )
+    return message
+
+
+class _FlattenToolOutput(AgentMiddleware):
+    """Apply ``_flatten`` to every tool result before the model sees it."""
+
+    def wrap_tool_call(self, request, handler):
+        return _flatten(handler(request))
+
+    async def awrap_tool_call(self, request, handler):
+        return _flatten(await handler(request))
 
 
 class _RoutedChatDatabricks(ChatDatabricks):
@@ -101,9 +135,9 @@ async def create_agent_graph(
         *genie_tools(workspace_client_for=workspace_client_for),
         *mcp,
     ]
-    middleware = (
-        [HumanInTheLoopMiddleware(interrupt_on=REQUIRE_APPROVAL)] if REQUIRE_APPROVAL else []
-    )
+    middleware = [_FlattenToolOutput()]
+    if REQUIRE_APPROVAL:
+        middleware.append(HumanInTheLoopMiddleware(interrupt_on=REQUIRE_APPROVAL))
     endpoint = model or MODEL
     return create_agent(
         # use_ai_gateway routes to the Unity Catalog AI Gateway (`<host>/ai-gateway/mlflow/v1`), so
@@ -112,6 +146,7 @@ async def create_agent_graph(
             endpoint=endpoint, workspace_client=workspace_client(), use_ai_gateway=True
         ),
         tools=tools,
+        system_prompt=SYSTEM_PROMPT,
         middleware=middleware,
         checkpointer=checkpointer(),
     )

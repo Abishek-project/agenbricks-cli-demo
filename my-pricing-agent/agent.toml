@@ -3,12 +3,34 @@ schema_version = 1
 [agent]
 framework = "langgraph"
 server = "agentbricks"
+deployment_name = "my-pricing-agent"
 
 [memory_store]
-name = "my-pricing-agent-rdnxwd-memory"
+name = "my-pricing-agent-abishek-memory"
 
 [session_store]
-name = "my-pricing-agent-rdnxwd-sessions"
+name = "my-pricing-agent-abishek-sessions"
 
 [tracing]
 experiment_name = "/Shared/agentbricks_traces/my-pricing-agent-rdnxwd"
+[[tools]]
+id = "search_skus"
+source = {kind = "uc_function", function = "gc_agent_bricks_mvp.gc_pricing_agent_mvp.search_skus"}
+[[tools]]
+id = "get_sku_pricing_context"
+source = {kind = "uc_function", function = "gc_agent_bricks_mvp.gc_pricing_agent_mvp.get_sku_pricing_context"}
+[[tools]]
+id = "list_price_change_candidates"
+source = {kind = "uc_function", function = "gc_agent_bricks_mvp.gc_pricing_agent_mvp.list_price_change_candidates"}
+[[tools]]
+id = "get_inventory_health"
+source = {kind = "uc_function", function = "gc_agent_bricks_mvp.gc_pricing_agent_mvp.get_inventory_health"}
+[[tools]]
+id = "get_sku_cost_and_fee_breakdown"
+source = {kind = "uc_function", function = "gc_agent_bricks_mvp.gc_pricing_agent_mvp.get_sku_cost_and_fee_breakdown"}
+[[tools]]
+id = "get_sku_elasticity_profile"
+source = {kind = "uc_function", function = "gc_agent_bricks_mvp.gc_pricing_agent_mvp.get_sku_elasticity_profile"}
+[[tools]]
+id = "simulate_price_change"
+source = {kind = "uc_function", function = "gc_agent_bricks_mvp.gc_pricing_agent_mvp.simulate_price_change"}
